@@ -11,9 +11,9 @@ Creates:
 
 import os
 import random
+from pathlib import Path
 
-
-INPUT_FILE = "raw/wiki.txt"
+INPUT_DIR = "raw"
 
 OUTPUT_DIR = "data"
 
@@ -70,27 +70,28 @@ def main():
     )
 
 
-    with open(
+lines = []
 
-        INPUT_FILE,
+files = sorted(Path(INPUT_DIR).glob("*.txt"))
 
-        "r",
+if not files:
+    raise FileNotFoundError(
+        f"No .txt files found inside '{INPUT_DIR}'"
+    )
 
-        encoding="utf-8"
+for file in files:
 
-    ) as f:
+    print(f"Reading {file.name}")
 
-        lines = [
+    with open(file, "r", encoding="utf-8") as f:
 
-            clean_line(line)
+        for line in f:
 
-            for line in f
+            line = clean_line(line)
 
-            if len(
-                line.strip()
-            ) > 50
+            if len(line) > 50:
 
-        ]
+                lines.append(line)
 
 
 
