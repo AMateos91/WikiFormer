@@ -1,78 +1,113 @@
 """
 generate.py
 
-Text generation script for WikiFormer.
+Inference pipeline for WikiFormer.
 
 Features:
-- Load trained checkpoint
+- Load trained checkpoints
+- Text generation
 - Temperature sampling
 - Top-k sampling
 - Top-p nucleus sampling
 - CUDA support
-
-Educational GPT-style inference pipeline.
 """
 
 
 import torch
 import torch.nn.functional as F
 
+
 from config import Config
 from model import GPTModel
 from tokenizer import Tokenizer
 
 
+
 ###############################################################
-# Sampling utilities
+# Sampling functions
 ###############################################################
 
 
-def top_k_filter(
+def apply_top_k(
     logits,
     k
 ):
+
     """
     Keep only the k most probable tokens.
     """
+
+    if k <= 0:
+        return logits
+
 
     values, _ = torch.topk(
         logits,
         k
     )
 
-    minimum = values[:, -1]
 
-    logits[
-        logits < minimum
-    ] = float("-inf")
+    minimum = values[:, -1].unsqueeze(
+        -1
+    )
+
+
+    logits = torch.where(
+
+        logits < minimum,
+
+        torch.full_like(
+            logits,
+            float("-inf")
+        ),
+
+        logits
+
+    )
+
 
     return logits
 
 
 
-def top_p_filter(
+
+def apply_top_p(
     logits,
     p
 ):
+
     """
     Nucleus sampling.
     """
 
+    if p >= 1.0:
+        return logits
+
+
     sorted_logits, sorted_indices = torch.sort(
+
         logits,
+
         descending=True
+
     )
 
 
     probabilities = torch.softmax(
+
         sorted_logits,
+
         dim=-1
+
     )
 
 
     cumulative = torch.cumsum(
+
         probabilities,
+
         dim=-1
+
     )
 
 
@@ -84,13 +119,20 @@ def top_p_filter(
     mask[:, 0] = False
 
 
-    sorted_logits[mask] = float("-inf")
+
+    sorted_logits[mask] = float(
+        "-inf"
+    )
 
 
     logits.scatter_(
+
         1,
+
         sorted_indices,
+
         sorted_logits
+
     )
 
 
@@ -99,104 +141,139 @@ def top_p_filter(
 
 
 ###############################################################
-# Text generation
+# Generation
 ###############################################################
 
 
 @torch.no_grad()
-def generate(
+def generate_text(
+
     model,
+
     tokenizer,
+
     prompt,
+
     max_tokens,
+
     temperature,
+
     top_k,
+
     top_p,
+
     device
+
 ):
+
 
     model.eval()
 
 
-    tokens = tokenizer.encode(
+
+    encoded = tokenizer.encode(
+
         prompt
+
     )
 
 
-    input_ids = torch.tensor(
-        tokens,
+    tokens = torch.tensor(
+
+        encoded,
+
         dtype=torch.long
-    ).unsqueeze(0)
 
+    ).unsqueeze(0).to(device)
 
-    input_ids = input_ids.to(
-        device
-    )
 
 
     for _ in range(max_tokens):
 
 
-        # Limit context length
+        context = tokens[
 
-        context = input_ids[
             :,
-            -Config.SEQ_LENGTH:
+
+            -Config.SEQUENCE_LENGTH:
+
         ]
 
 
+
         logits = model(
+
             context
+
         )
 
 
         logits = logits[:, -1, :]
 
 
-        logits = logits / temperature
+
+        logits /= temperature
 
 
 
-        if top_k > 0:
+        logits = apply_top_k(
 
-            logits = top_k_filter(
-                logits,
-                top_k
-            )
+            logits,
+
+            top_k
+
+        )
 
 
-        if top_p < 1.0:
+        logits = apply_top_p(
 
-            logits = top_p_filter(
-                logits,
-                top_p
-            )
+            logits,
+
+            top_p
+
+        )
+
 
 
         probabilities = torch.softmax(
+
             logits,
+
             dim=-1
+
         )
 
 
         next_token = torch.multinomial(
+
             probabilities,
+
             num_samples=1
+
         )
 
 
-        input_ids = torch.cat(
+
+        tokens = torch.cat(
+
             [
-                input_ids,
+
+                tokens,
+
                 next_token
+
             ],
+
             dim=1
+
         )
 
 
 
     output = tokenizer.decode(
-        input_ids[0].tolist()
+
+        tokens[0].tolist()
+
     )
 
 
@@ -205,33 +282,79 @@ def generate(
 
 
 ###############################################################
-# Load checkpoint
+# Checkpoint loader
 ###############################################################
 
 
 def load_model(
+
     checkpoint_path,
+
     device
+
 ):
 
 
-    cfg = Config()
-
-
     model = GPTModel(
-        cfg
+        Config
     )
+
 
 
     checkpoint = torch.load(
+
         checkpoint_path,
+
         map_location=device
+
     )
+
+
+
+    state_dict = checkpoint[
+
+        "model_state_dict"
+
+    ]
+
+
+
+    ###########################################################
+    # Compatibility with torch.compile()
+    ###########################################################
+
+    cleaned_state_dict = {}
+
+
+
+    for key, value in state_dict.items():
+
+
+        if key.startswith(
+            "_orig_mod."
+        ):
+
+            key = key.replace(
+
+                "_orig_mod.",
+
+                ""
+
+            )
+
+
+        cleaned_state_dict[key] = value
+
 
 
     model.load_state_dict(
-        checkpoint["model"]
+
+        cleaned_state_dict,
+
+        strict=True
+
     )
+
 
 
     model.to(device)
@@ -252,61 +375,83 @@ def load_model(
 def main():
 
 
-    cfg = Config()
+    cfg = Config
+
 
 
     device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
+
+        cfg.DEVICE
+
     )
 
 
     print(
-        "Using device:",
+
+        "Device:",
+
         device
+
     )
+
 
 
     tokenizer = Tokenizer(
+
         cfg
+
     )
 
-
-    checkpoint = (
-        "checkpoints/"
-        "checkpoint_latest.pt"
-    )
 
 
     model = load_model(
-        checkpoint,
+
+        cfg.LAST_CHECKPOINT,
+
         device
+
     )
+
 
 
     prompt = input(
+
         "\nPrompt: "
+
     )
 
 
-    result = generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=prompt,
-        max_tokens=cfg.MAX_NEW_TOKENS,
-        temperature=cfg.TEMPERATURE,
-        top_k=cfg.TOP_K,
-        top_p=cfg.TOP_P,
-        device=device
+
+    text = generate_text(
+
+        model,
+
+        tokenizer,
+
+        prompt,
+
+        cfg.MAX_NEW_TOKENS,
+
+        cfg.TEMPERATURE,
+
+        cfg.TOP_K,
+
+        cfg.TOP_P,
+
+        device
+
     )
+
 
 
     print(
+
         "\nGenerated text:\n"
+
     )
 
-    print(result)
+
+    print(text)
 
 
 
