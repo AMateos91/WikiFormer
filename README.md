@@ -8,7 +8,7 @@ WikiFormer is an educational project focused on understanding the internal compo
 - Self-attention
 - Training pipeline
 - Text generation
-
+WikiFormer accepts any collection of UTF-8 text files. The training corpus can range from a small demo dataset to the complete English Wikipedia dump without modifying the source code.
 
 ## Features
 
