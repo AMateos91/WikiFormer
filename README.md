@@ -66,7 +66,7 @@ python prepare_data.py
 
 This creates:
 
-data/train.txt
+data/train.txt and
 data/validation.txt
 
 ## Training
@@ -85,8 +85,6 @@ After training:
 
 python generate.py
 
-Example:
-
 ## Prompt:
 
 Artificial intelligence
@@ -104,7 +102,8 @@ Transformer blocks
 Multi-head attention
 Feed-forward layers
 Layer normalization
-License
+
+## License
 
 MIT License
 
