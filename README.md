@@ -9,7 +9,7 @@ WikiFormer is an educational project focused on understanding the internal compo
 - Training pipeline
 - Text generation
 
-WikiFormer accepts any collection of UTF-8 text files. The training corpus can range from a small demo dataset to the complete English Wikipedia dump without modifying the source code.
+WikiFormer accepts any collection of UTF-8 text files. The training corpus can range from a small demo dataset to the complete English Wikipedia dump without modifying the source code. WikiFormer is designed to train on arbitrary text corpora. The current repository includes a lightweight example dataset, while larger corpora (e.g. the English Wikipedia dump) can be used following the same preprocessing pipeline.
 
 ## Features
 
