@@ -164,8 +164,8 @@ Train the tokenizer first.
 
 
 def train_tokenizer(
-    input_file,
-    output_prefix,
+    input_dir="raw",
+    output_prefix="tokenizer/wiki",
     vocab_size=32000
 ):
 
@@ -174,8 +174,8 @@ def train_tokenizer(
 
     Parameters:
 
-    input_file:
-        Plain text corpus.
+    input_dir:
+        Any volume of text and files (Wikipedia).
 
     output_prefix:
         Output model prefix.
