@@ -96,12 +96,12 @@ Artificial intelligence is a field...
 
 The model contains:
 
-Token embeddings
-Positional embeddings
-Transformer blocks
-Multi-head attention
-Feed-forward layers
-Layer normalization
+-Token embeddings
+-Positional embeddings
+-Transformer blocks
+-Multi-head attention
+-Feed-forward layers
+-Layer normalization
 
 ## License
 
