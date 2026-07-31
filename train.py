@@ -1,76 +1,78 @@
 """
 train.py
 
-Training loop for a small GPT-style Transformer.
+Training pipeline for WikiFormer.
 
-Educational implementation:
-- PyTorch 2.x
-- Mixed precision
+Features:
+- PyTorch training loop
+- Mixed Precision (AMP)
+- AdamW optimizer
+- Learning rate scheduler
+- Validation
 - Checkpointing
-- Validation loop
+- Resume training
 """
 
+
 import os
+import math
+
 import torch
-from torch.utils.data import DataLoader
+import torch.nn as nn
+
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
+
 from torch.amp import autocast, GradScaler
 
+
 from config import Config
-from dataset import TextDataset
+from dataset import create_dataloaders
 from model import GPTModel
 
+from utils import (
+    set_seed,
+    create_directory,
+    save_checkpoint,
+    load_checkpoint,
+    print_model_size,
+    clip_gradients,
+    device_info
+)
 
-def save_checkpoint(model, optimizer, epoch, loss, path):
-    checkpoint = {
-        "epoch": epoch,
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "loss": loss,
-    }
-
-    torch.save(checkpoint, path)
 
 
-def train_one_epoch(
-    model,
-    loader,
+###############################################################
+# Learning rate scheduler
+###############################################################
+
+
+def warmup_scheduler(
     optimizer,
-    scaler,
-    criterion,
-    device
+    warmup_steps
 ):
 
-    model.train()
+    def lr_lambda(step):
 
-    total_loss = 0
+        if step < warmup_steps:
 
-    for x, y in loader:
-
-        x = x.to(device)
-        y = y.to(device)
-
-        optimizer.zero_grad()
-
-        with autocast(
-            device_type=device.type
-        ):
-
-            logits = model(x)
-
-            loss = criterion(
-                logits.view(-1, logits.size(-1)),
-                y.view(-1)
+            return float(step + 1) / float(
+                warmup_steps
             )
 
-        scaler.scale(loss).backward()
+        return 1.0
 
-        scaler.step(optimizer)
 
-        scaler.update()
+    return LambdaLR(
+        optimizer,
+        lr_lambda
+    )
 
-        total_loss += loss.item()
 
-    return total_loss / len(loader)
+
+###############################################################
+# Validation
+###############################################################
 
 
 def evaluate(
@@ -84,6 +86,9 @@ def evaluate(
 
     total_loss = 0
 
+    batches = 0
+
+
     with torch.no_grad():
 
         for x, y in loader:
@@ -91,48 +96,195 @@ def evaluate(
             x = x.to(device)
             y = y.to(device)
 
-            logits = model(x)
 
-            loss = criterion(
-                logits.view(-1, logits.size(-1)),
-                y.view(-1)
-            )
+            with autocast(
+                device_type=device.type
+            ):
+
+                logits = model(x)
+
+
+                loss = criterion(
+
+                    logits.reshape(
+                        -1,
+                        logits.size(-1)
+                    ),
+
+                    y.reshape(-1)
+
+                )
+
 
             total_loss += loss.item()
 
-    return total_loss / len(loader)
+            batches += 1
+
+
+    return total_loss / max(
+        batches,
+        1
+    )
+
+
+
+###############################################################
+# Training epoch
+###############################################################
+
+
+def train_epoch(
+    model,
+    loader,
+    optimizer,
+    scheduler,
+    scaler,
+    criterion,
+    device,
+    epoch
+):
+
+    model.train()
+
+    total_loss = 0
+
+    batches = 0
+
+
+    for step, (x, y) in enumerate(loader):
+
+
+        x = x.to(
+            device,
+            non_blocking=True
+        )
+
+
+        y = y.to(
+            device,
+            non_blocking=True
+        )
+
+
+        optimizer.zero_grad(
+            set_to_none=True
+        )
+
+
+        with autocast(
+            device_type=device.type,
+            enabled=Config.USE_AMP
+        ):
+
+
+            logits = model(x)
+
+
+            loss = criterion(
+
+                logits.reshape(
+                    -1,
+                    logits.size(-1)
+                ),
+
+                y.reshape(-1)
+
+            )
+
+
+        scaler.scale(
+            loss
+        ).backward()
+
+
+
+        scaler.unscale_(
+            optimizer
+        )
+
+
+        clip_gradients(
+
+            model,
+
+            Config.GRADIENT_CLIP
+
+        )
+
+
+        scaler.step(
+            optimizer
+        )
+
+
+        scaler.update()
+
+
+        scheduler.step()
+
+
+        total_loss += loss.item()
+
+        batches += 1
+
+
+
+        if step % Config.LOG_INTERVAL == 0:
+
+            print(
+                f"Epoch {epoch} "
+                f"Step {step} "
+                f"Loss {loss.item():.4f}"
+            )
+
+
+    return total_loss / max(
+        batches,
+        1
+    )
+
+
+
+###############################################################
+# Main
+###############################################################
 
 
 def main():
 
-    cfg = Config()
+    cfg = Config
 
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
 
-    train_dataset = TextDataset(
-        cfg.train_file,
-        cfg.sequence_length
-    )
-
-    val_dataset = TextDataset(
-        cfg.val_file,
-        cfg.sequence_length
+    set_seed(
+        cfg.SEED
     )
 
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg.batch_size,
-        shuffle=True
+    create_directory(
+        cfg.CHECKPOINT_DIR
     )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.batch_size
+
+    device_info()
+
+
+    device = torch.device(
+        cfg.DEVICE
+    )
+
+
+    print(
+        "\nLoading dataset..."
+    )
+
+
+    train_loader, val_loader = (
+        create_dataloaders(cfg)
+    )
+
+
+    print(
+        "Building model..."
     )
 
 
@@ -141,54 +293,194 @@ def main():
     ).to(device)
 
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg.learning_rate,
-        weight_decay=cfg.weight_decay
+    print_model_size(
+        model
     )
 
 
-    criterion = torch.nn.CrossEntropyLoss()
+
+    ###########################################################
+    # Compile model
+    ###########################################################
+
+    if (
+        cfg.USE_COMPILE
+        and
+        hasattr(torch, "compile")
+    ):
+
+        print(
+            "Compiling model..."
+        )
+
+        model = torch.compile(
+            model
+        )
 
 
-    scaler = GradScaler()
+
+    ###########################################################
+    # Optimizer
+    ###########################################################
+
+    optimizer = AdamW(
+
+        model.parameters(),
+
+        lr=cfg.LEARNING_RATE,
+
+        weight_decay=cfg.WEIGHT_DECAY
+
+    )
 
 
-    for epoch in range(cfg.epochs):
+    scheduler = warmup_scheduler(
 
-        train_loss = train_one_epoch(
+        optimizer,
+
+        cfg.WARMUP_STEPS
+
+    )
+
+
+    criterion = nn.CrossEntropyLoss()
+
+
+    scaler = GradScaler(
+        enabled=cfg.USE_AMP
+    )
+
+
+
+    ###########################################################
+    # Resume checkpoint
+    ###########################################################
+
+    start_epoch = 1
+
+
+    if os.path.exists(
+        cfg.LAST_CHECKPOINT
+    ):
+
+        print(
+            "Loading checkpoint..."
+        )
+
+
+        epoch, loss = load_checkpoint(
+
+            cfg.LAST_CHECKPOINT,
+
             model,
-            train_loader,
+
             optimizer,
-            scaler,
-            criterion,
+
+            scheduler,
+
             device
+
+        )
+
+
+        start_epoch = epoch + 1
+
+
+        print(
+            f"Resumed from epoch {epoch}"
+        )
+
+
+
+    ###########################################################
+    # Training loop
+    ###########################################################
+
+    for epoch in range(
+
+        start_epoch,
+
+        cfg.EPOCHS + 1
+
+    ):
+
+
+        print(
+            f"\n===== Epoch {epoch}/{cfg.EPOCHS} ====="
+        )
+
+
+        train_loss = train_epoch(
+
+            model,
+
+            train_loader,
+
+            optimizer,
+
+            scheduler,
+
+            scaler,
+
+            criterion,
+
+            device,
+
+            epoch
+
         )
 
 
         val_loss = evaluate(
+
             model,
+
             val_loader,
+
             criterion,
+
             device
+
         )
 
 
         print(
-            f"Epoch {epoch+1}: "
-            f"train={train_loss:.4f} "
-            f"val={val_loss:.4f}"
+            f"""
+Epoch complete
+
+Train loss:
+{train_loss:.4f}
+
+Validation loss:
+{val_loss:.4f}
+"""
         )
+
 
 
         save_checkpoint(
+
             model,
+
             optimizer,
+
             epoch,
+
             val_loss,
-            f"checkpoint_{epoch}.pt"
+
+            cfg.LAST_CHECKPOINT,
+
+            scheduler
+
         )
 
 
+        print(
+            "Checkpoint saved."
+        )
+
+
+
 if __name__ == "__main__":
+
     main()
