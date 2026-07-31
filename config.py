@@ -51,11 +51,19 @@ class Config:
         "checkpoints"
     )
 
+    RAW_DATA_DIR = os.path.join(
+    ROOT_DIR,
+    "raw"
+    )
+
+    TOKENIZER_DIR = os.path.join(
+    ROOT_DIR,
+    "tokenizer"
+    )
 
     TOKENIZER_PATH = os.path.join(
-        ROOT_DIR,
-        "tokenizer",
-        "wiki.model"
+    TOKENIZER_DIR,
+    "wiki.model"
     )
 
 
